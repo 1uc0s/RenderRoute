@@ -47,12 +47,26 @@ class MultiChannelExportPipelineSetup(Operator):
             
         blend_filename = os.path.splitext(os.path.basename(blend_filepath))[0]
         
+        # Debug: print paths
+        abs_input_dir = bpy.path.abspath(input_dir)
+        abs_output_dir = bpy.path.abspath(output_dir)
+        self.report({'INFO'}, f"DEBUGGING: Setting up compositor for {scene_name}")
+        self.report({'INFO'}, f"DEBUGGING: Input dir: {abs_input_dir}")
+        self.report({'INFO'}, f"DEBUGGING: Output dir: {abs_output_dir}")
+        
+        # Create output directory if it doesn't exist
+        if not os.path.exists(abs_output_dir):
+            os.makedirs(abs_output_dir)
+            self.report({'INFO'}, f"DEBUGGING: Created output directory: {abs_output_dir}")
+        
         # Create a new scene for compositing
         comp_scene_name = scene_name + "_Comp"
         if comp_scene_name in bpy.data.scenes:
             comp_scene = bpy.data.scenes[comp_scene_name]
+            self.report({'INFO'}, f"DEBUGGING: Using existing compositor scene: {comp_scene_name}")
         else:
             comp_scene = bpy.data.scenes.new(comp_scene_name)
+            self.report({'INFO'}, f"DEBUGGING: Created new compositor scene: {comp_scene_name}")
         
         # Setup the scene for video output
         if scene_name in bpy.data.scenes:
@@ -61,15 +75,19 @@ class MultiChannelExportPipelineSetup(Operator):
             comp_scene.render.fps = source_scene.render.fps
             comp_scene.frame_start = source_scene.frame_start
             comp_scene.frame_end = source_scene.frame_end
+            self.report({'INFO'}, f"DEBUGGING: Copied settings from {scene_name}: FPS={source_scene.render.fps}, Frame range={source_scene.frame_start}-{source_scene.frame_end}")
         else:
             # Default values if source scene doesn't exist
             comp_scene.render.fps = 30
             comp_scene.frame_start = 1
             comp_scene.frame_end = 250
+            self.report({'INFO'}, f"DEBUGGING: Using default settings: FPS=30, Frame range=1-250")
         
         # Set the output path for the video (relative to blend file)
-        output_path = output_dir + blend_filename
+        # NOTE: Make sure to add the file extension for the output video
+        output_path = output_dir + blend_filename + ".mp4"
         comp_scene.render.filepath = output_path
+        self.report({'INFO'}, f"DEBUGGING: Output path set to: {output_path}")
         
         # Set output to FFMPEG video with MPEG-4
         comp_scene.render.image_settings.file_format = 'FFMPEG'
@@ -88,10 +106,12 @@ class MultiChannelExportPipelineSetup(Operator):
         # Set up the VSE
         if not comp_scene.sequence_editor:
             comp_scene.sequence_editor_create()
+            self.report({'INFO'}, "DEBUGGING: Created new sequence editor")
         
         # Clear existing strips
         for strip in comp_scene.sequence_editor.sequences:
             comp_scene.sequence_editor.sequences.remove(strip)
+        self.report({'INFO'}, "DEBUGGING: Cleared existing sequence strips")
         
         # Add image sequence
         frame_path = input_dir + blend_filename + "_"
@@ -102,8 +122,8 @@ class MultiChannelExportPipelineSetup(Operator):
         frames = glob.glob(frame_pattern)
         
         # Print debug info
-        print(f"Looking for frames at: {frame_pattern}")
-        print(f"Found {len(frames)} frames")
+        self.report({'INFO'}, f"DEBUGGING: Looking for frames at: {frame_pattern}")
+        self.report({'INFO'}, f"DEBUGGING: Found {len(frames)} frames")
         
         if frames:
             # Sort the frames to ensure correct order
@@ -113,6 +133,9 @@ class MultiChannelExportPipelineSetup(Operator):
             last_frame = frames[-1]
             num_frames = len(frames)
             
+            self.report({'INFO'}, f"DEBUGGING: First frame: {first_frame}")
+            self.report({'INFO'}, f"DEBUGGING: Last frame: {last_frame}")
+            
             # Calculate new scene end frame for looping if enabled
             loop_extend_frames = bpy.context.scene.loop_extend_frames
             hold_frames = bpy.context.scene.hold_frames
@@ -121,84 +144,98 @@ class MultiChannelExportPipelineSetup(Operator):
                 # Forward + hold + reverse + hold
                 new_end_frame = (num_frames * 2) + (hold_frames * 2)
                 comp_scene.frame_end = new_end_frame
+                self.report({'INFO'}, f"DEBUGGING: Loop enabled, new end frame: {new_end_frame}")
             
             # Create the forward image strip
-            forward_strip = strips.new_image(
-                name=f"{scene_name}_Forward",
-                filepath=first_frame,
-                channel=1,
-                frame_start=1
-            )
-            
-            # Set the frame duration
-            forward_strip.frame_final_duration = num_frames
-            
-            # If looping is enabled, create the additional parts of the loop
-            if loop_extend_frames and num_frames > 1:
-                # 1. Hold the last frame
-                last_frame_strip = strips.new_image(
-                    name=f"{scene_name}_HoldLast",
-                    filepath=last_frame,
-                    channel=1,
-                    frame_start=num_frames + 1
-                )
-                last_frame_strip.frame_final_duration = hold_frames
-                
-                # 2. Add reversed sequence
-                reverse_strip = strips.new_image(
-                    name=f"{scene_name}_Reverse",
-                    filepath=last_frame,  # Start with last frame
-                    channel=1,
-                    frame_start=num_frames + hold_frames + 1
-                )
-                reverse_strip.frame_final_duration = num_frames
-                
-                # Now create the reverse sequence
-                if hasattr(reverse_strip, "elements"):
-                    # Clear existing elements
-                    while len(reverse_strip.elements) > 0:
-                        reverse_strip.elements.pop()
-                    
-                    # Add frames in reverse order
-                    for i, frame_path in enumerate(reversed(frames)):
-                        element = reverse_strip.elements.append(frame_path)
-                
-                # 3. Hold the first frame
-                first_frame_strip = strips.new_image(
-                    name=f"{scene_name}_HoldFirst",
+            try:
+                forward_strip = strips.new_image(
+                    name=f"{scene_name}_Forward",
                     filepath=first_frame,
                     channel=1,
-                    frame_start=num_frames * 2 + hold_frames + 1
+                    frame_start=1
                 )
-                first_frame_strip.frame_final_duration = hold_frames
+                
+                # Set the image strip to use the sequence
+                forward_strip.use_sequence = True
+                forward_strip.frame_final_duration = num_frames
+                
+                self.report({'INFO'}, f"DEBUGGING: Created forward strip with {num_frames} frames")
+                
+                # If looping is enabled, create the additional parts of the loop
+                if loop_extend_frames and num_frames > 1:
+                    # 1. Hold the last frame
+                    last_frame_strip = strips.new_image(
+                        name=f"{scene_name}_HoldLast",
+                        filepath=last_frame,
+                        channel=1,
+                        frame_start=num_frames + 1
+                    )
+                    last_frame_strip.frame_final_duration = hold_frames
+                    
+                    # 2. Add reversed sequence
+                    reverse_strip = strips.new_image(
+                        name=f"{scene_name}_Reverse",
+                        filepath=last_frame,  # Start with last frame
+                        channel=1,
+                        frame_start=num_frames + hold_frames + 1
+                    )
+                    reverse_strip.frame_final_duration = num_frames
+                    
+                    # Now create the reverse sequence
+                    if hasattr(reverse_strip, "elements"):
+                        # Clear existing elements
+                        while len(reverse_strip.elements) > 0:
+                            reverse_strip.elements.pop()
+                        
+                        # Add frames in reverse order
+                        for i, frame_path in enumerate(reversed(frames)):
+                            element = reverse_strip.elements.append(frame_path)
+                    
+                    # 3. Hold the first frame
+                    first_frame_strip = strips.new_image(
+                        name=f"{scene_name}_HoldFirst",
+                        filepath=first_frame,
+                        channel=1,
+                        frame_start=num_frames * 2 + hold_frames + 1
+                    )
+                    first_frame_strip.frame_final_duration = hold_frames
+                    
+                    self.report({'INFO'}, "DEBUGGING: Created loop animation strips")
+            except Exception as e:
+                self.report({'ERROR'}, f"DEBUGGING: Error creating strips: {str(e)}")
+                return False
             
             self.report({'INFO'}, f"Added {num_frames} frames to {comp_scene_name}")
             
-            # If looping, update info
-            if loop_extend_frames:
-                self.report({'INFO'}, f"Created loop animation with {hold_frames} hold frames")
+            # Force an update to ensure the VSE recognizes the changes
+            bpy.context.view_layer.update()
             
             return True
         else:
             self.report({'WARNING'}, f"No frames found at {frame_pattern}. You'll need to render before compositing.")
             
             # Create a text strip with warning message
-            text_strip = strips.new_effect(
-                name="Warning",
-                type='TEXT',
-                channel=1,
-                frame_start=1,
-                frame_end=comp_scene.frame_end
-            )
-            
-            # Set the text directly as a string
-            if hasattr(text_strip, "text"):
-                text_strip.text = "No frames found - render the scene first"
-                # Set text properties for better visibility
-                if hasattr(text_strip, "font_size"):
-                    text_strip.font_size = 48
-                if hasattr(text_strip, "color"):
-                    text_strip.color = (1.0, 0.3, 0.3, 1.0)  # Red text
+            try:
+                text_strip = strips.new_effect(
+                    name="Warning",
+                    type='TEXT',
+                    channel=1,
+                    frame_start=1,
+                    frame_end=comp_scene.frame_end
+                )
+                
+                # Set the text directly as a string
+                if hasattr(text_strip, "text"):
+                    text_strip.text = "No frames found - render the scene first"
+                    # Set text properties for better visibility
+                    if hasattr(text_strip, "font_size"):
+                        text_strip.font_size = 48
+                    if hasattr(text_strip, "color"):
+                        text_strip.color = (1.0, 0.3, 0.3, 1.0)  # Red text
+                
+                self.report({'INFO'}, "DEBUGGING: Created warning text strip")
+            except Exception as e:
+                self.report({'ERROR'}, f"DEBUGGING: Error creating text strip: {str(e)}")
             
             return False
     

@@ -4,10 +4,6 @@ import glob
 from bpy.props import StringProperty
 from bpy.types import Operator
 
-# Import the setup_compositor function from setup.py
-# We'll reuse the function that creates the compositor
-from .setup import MultiChannelExportPipelineSetup
-
 class RenderAllOperator(Operator):
     """Render all scenes and composites in sequence"""
     bl_idname = "export.render_all"
@@ -15,15 +11,10 @@ class RenderAllOperator(Operator):
     bl_options = {'REGISTER'}
     
     def execute(self, context):
-        # Render frames first, then refresh compositors, then render videos
+        # Render frames first, then render videos
         frame_scenes = [
             "MobileScene",
             "DesktopScene"
-        ]
-        
-        composite_scenes = [
-            "MobileScene_Comp",
-            "DesktopScene_Comp"
         ]
         
         # Store original scene
@@ -48,22 +39,13 @@ class RenderAllOperator(Operator):
             else:
                 self.report({'WARNING'}, f"Scene {scene_name} not found!")
         
-        # Now recreate the compositor scenes to make sure they find the frames
-        self.report({'INFO'}, "--- Refreshing compositors ---")
-        
         # Get the current blend file name and output directories
         blend_filepath = bpy.data.filepath
         if not blend_filepath:
             self.report({'ERROR'}, "Please save your file first")
             return {'CANCELLED'}
-            
-        blend_filename = os.path.splitext(os.path.basename(blend_filepath))[0]
         
-        # Get output directory from scene settings
-        # Using the ControlScene as reference for settings
-        control_scene = bpy.data.scenes.get("ControlScene", context.scene)
-        loop_extend_frames = control_scene.loop_extend_frames
-        hold_frames = control_scene.hold_frames
+        blend_filename = os.path.splitext(os.path.basename(blend_filepath))[0]
         
         # Use the default output path if not specified
         output_dir = "//Output/"
@@ -72,69 +54,144 @@ class RenderAllOperator(Operator):
         mobile_frames_dir = output_dir + "MobileFrames/"
         desktop_frames_dir = output_dir + "DesktopFrames/"
         
-        # Manually verify frame existence and report
+        # Manually set up the composition scenes
+        self.report({'INFO'}, "--- Setting up composition scenes ---")
+        
+        # Mobile composition setup
         mobile_pattern = bpy.path.abspath(mobile_frames_dir + blend_filename + "_*.*")
-        desktop_pattern = bpy.path.abspath(desktop_frames_dir + blend_filename + "_*.*")
-        
         mobile_frames = glob.glob(mobile_pattern)
-        desktop_frames = glob.glob(desktop_pattern)
-        
         self.report({'INFO'}, f"Found {len(mobile_frames)} mobile frames")
-        self.report({'INFO'}, f"Found {len(desktop_frames)} desktop frames")
         
-        # If we have frames, recreate the compositor scenes to ensure they pick up the frames
-        if mobile_frames:
-            self.report({'INFO'}, "Refreshing MobileScene_Comp")
-            # Get active operator
-            setup_op = MultiChannelExportPipelineSetup
-            # Call setup_compositor function to rebuild the compositor with the right frames
-            setup_op.setup_compositor(
-                setup_op,
+        if mobile_frames and len(mobile_frames) > 0:
+            # Make sure output directory exists
+            mobile_out_dir = bpy.path.abspath(output_dir + "MobileOut/")
+            os.makedirs(mobile_out_dir, exist_ok=True)
+            
+            # Set up the mobile composition scene
+            self.setup_simple_composition(
                 "MobileScene", 
-                mobile_frames_dir, 
-                output_dir + "MobileOut/",
-                is_mobile=True
+                mobile_frames, 
+                output_dir + "MobileOut/" + blend_filename + ".mp4"
             )
         
-        if desktop_frames:
-            self.report({'INFO'}, "Refreshing DesktopScene_Comp")
-            # Get active operator
-            setup_op = MultiChannelExportPipelineSetup
-            # Call setup_compositor function to rebuild the compositor with the right frames
-            setup_op.setup_compositor(
-                setup_op,
+        # Desktop composition setup
+        desktop_pattern = bpy.path.abspath(desktop_frames_dir + blend_filename + "_*.*")
+        desktop_frames = glob.glob(desktop_pattern)
+        self.report({'INFO'}, f"Found {len(desktop_frames)} desktop frames")
+        
+        if desktop_frames and len(desktop_frames) > 0:
+            # Make sure output directory exists
+            desktop_out_dir = bpy.path.abspath(output_dir + "DesktopOut/")
+            os.makedirs(desktop_out_dir, exist_ok=True)
+            
+            # Set up the desktop composition scene
+            self.setup_simple_composition(
                 "DesktopScene", 
-                desktop_frames_dir, 
-                output_dir + "DesktopOut/",
-                is_mobile=False
+                desktop_frames, 
+                output_dir + "DesktopOut/" + blend_filename + ".mp4"
             )
         
         # Force scene refresh
         bpy.context.view_layer.update()
         
-        # Then render all the composite scenes
+        # Render the composition scenes
         self.report({'INFO'}, "--- Creating Videos ---")
-        for scene_name in composite_scenes:
-            if scene_name in bpy.data.scenes:
-                self.report({'INFO'}, f"Rendering {scene_name}...")
-                
-                # Switch to the scene
-                context.window.scene = bpy.data.scenes[scene_name]
-                
-                # Force screen update
-                bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
-                
-                # Render animation for this scene
+        
+        # Render mobile composition
+        if "MobileScene_Comp" in bpy.data.scenes and len(mobile_frames) > 0:
+            self.report({'INFO'}, "Rendering MobileScene_Comp...")
+            context.window.scene = bpy.data.scenes["MobileScene_Comp"]
+            bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+            try:
                 bpy.ops.render.render(animation=True)
-                
-                self.report({'INFO'}, f"Finished rendering {scene_name}")
-            else:
-                self.report({'WARNING'}, f"Scene {scene_name} not found!")
+                self.report({'INFO'}, "Finished rendering MobileScene_Comp")
+            except Exception as e:
+                self.report({'ERROR'}, f"Error rendering MobileScene_Comp: {str(e)}")
+        
+        # Render desktop composition
+        if "DesktopScene_Comp" in bpy.data.scenes and len(desktop_frames) > 0:
+            self.report({'INFO'}, "Rendering DesktopScene_Comp...")
+            context.window.scene = bpy.data.scenes["DesktopScene_Comp"]
+            bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+            try:
+                bpy.ops.render.render(animation=True)
+                self.report({'INFO'}, "Finished rendering DesktopScene_Comp")
+            except Exception as e:
+                self.report({'ERROR'}, f"Error rendering DesktopScene_Comp: {str(e)}")
         
         # Return to original scene
         context.window.scene = bpy.data.scenes[original_scene]
         self.report({'INFO'}, "All rendering complete!")
         return {'FINISHED'}
+    
+    def setup_simple_composition(self, scene_name, frames, output_path):
+        """Set up a simple composition scene with frames"""
+        if not frames:
+            self.report({'WARNING'}, f"No frames found for {scene_name}")
+            return False
+        
+        # Create or get the composition scene
+        comp_scene_name = f"{scene_name}_Comp"
+        if comp_scene_name in bpy.data.scenes:
+            comp_scene = bpy.data.scenes[comp_scene_name]
+            self.report({'INFO'}, f"Using existing scene: {comp_scene_name}")
+        else:
+            comp_scene = bpy.data.scenes.new(comp_scene_name)
+            self.report({'INFO'}, f"Created new scene: {comp_scene_name}")
+        
+        # Copy settings from source scene if it exists
+        if scene_name in bpy.data.scenes:
+            source_scene = bpy.data.scenes[scene_name]
+            comp_scene.render.fps = source_scene.render.fps
+            comp_scene.frame_start = 1
+            comp_scene.frame_end = len(frames)
+        else:
+            comp_scene.render.fps = 30
+            comp_scene.frame_start = 1
+            comp_scene.frame_end = len(frames)
+        
+        # Set up FFMPEG output
+        comp_scene.render.filepath = output_path
+        comp_scene.render.image_settings.file_format = 'FFMPEG'
+        comp_scene.render.ffmpeg.format = 'MPEG4'
+        comp_scene.render.ffmpeg.codec = 'H264'
+        comp_scene.render.ffmpeg.constant_rate_factor = 'MEDIUM'
+        comp_scene.render.ffmpeg.audio_codec = 'AAC'
+        
+        # Set up VSE
+        if not comp_scene.sequence_editor:
+            comp_scene.sequence_editor_create()
+        
+        # Clear existing strips
+        for strip in comp_scene.sequence_editor.sequences:
+            comp_scene.sequence_editor.sequences.remove(strip)
+        
+        # Sort frames to ensure they're in order
+        frames.sort()
+        
+        # Add the image sequence
+        strips = comp_scene.sequence_editor.sequences
+        first_frame = frames[0]  # Use the first frame
+        
+        # Create image strip
+        try:
+            image_strip = strips.new_image(
+                name=f"{scene_name}_Sequence",
+                filepath=first_frame,
+                channel=1,
+                frame_start=1
+            )
+            
+            # Make it use the sequence of frames
+            image_strip.use_sequence = True
+            image_strip.frame_final_duration = len(frames)
+            
+            self.report({'INFO'}, f"Added image sequence with {len(frames)} frames")
+            
+            return True
+        except Exception as e:
+            self.report({'ERROR'}, f"Error setting up composition: {str(e)}")
+            return False
 
 
 class RenderMobileOnlyOperator(Operator):
@@ -144,10 +201,17 @@ class RenderMobileOnlyOperator(Operator):
     bl_options = {'REGISTER'}
     
     def execute(self, context):
-        # First render frames, then refresh compositor, then render video
-        
         # Store original scene
         original_scene = context.window.scene.name
+        
+        # Get the current blend file name
+        blend_filepath = bpy.data.filepath
+        if not blend_filepath:
+            self.report({'ERROR'}, "Please save your file first")
+            return {'CANCELLED'}
+        
+        blend_filename = os.path.splitext(os.path.basename(blend_filepath))[0]
+        output_dir = "//Output/"
         
         # Step 1: Render the main scene
         scene_name = "MobileScene"
@@ -167,55 +231,39 @@ class RenderMobileOnlyOperator(Operator):
         else:
             self.report({'WARNING'}, f"Scene {scene_name} not found!")
         
-        # Step 2: Refresh the compositor scene
-        blend_filepath = bpy.data.filepath
-        if not blend_filepath:
-            self.report({'ERROR'}, "Please save your file first")
-            return {'CANCELLED'}
-            
-        blend_filename = os.path.splitext(os.path.basename(blend_filepath))[0]
-        output_dir = "//Output/"
+        # Step 2: Check for frames and set up composition
         mobile_frames_dir = output_dir + "MobileFrames/"
-        
-        # Manually verify frame existence and report
         mobile_pattern = bpy.path.abspath(mobile_frames_dir + blend_filename + "_*.*")
         mobile_frames = glob.glob(mobile_pattern)
+        
         self.report({'INFO'}, f"Found {len(mobile_frames)} mobile frames")
         
-        # If we have frames, refresh the compositor scene
-        if mobile_frames:
-            self.report({'INFO'}, "Refreshing MobileScene_Comp")
-            # Get active operator
-            setup_op = MultiChannelExportPipelineSetup
-            # Call setup_compositor function to rebuild the compositor with the right frames
-            setup_op.setup_compositor(
-                setup_op,
-                "MobileScene", 
-                mobile_frames_dir, 
-                output_dir + "MobileOut/",
-                is_mobile=True
+        if mobile_frames and len(mobile_frames) > 0:
+            # Make sure output directory exists
+            mobile_out_dir = bpy.path.abspath(output_dir + "MobileOut/")
+            os.makedirs(mobile_out_dir, exist_ok=True)
+            
+            # Set up the composition scene
+            all_renderer = RenderAllOperator()
+            all_renderer.report = self.report
+            
+            success = all_renderer.setup_simple_composition(
+                "MobileScene",
+                mobile_frames,
+                output_dir + "MobileOut/" + blend_filename + ".mp4"
             )
-        
-        # Force scene refresh
-        bpy.context.view_layer.update()
-        
-        # Step 3: Render the compositor scene
-        comp_scene_name = "MobileScene_Comp"
-        if comp_scene_name in bpy.data.scenes:
-            self.report({'INFO'}, f"Rendering {comp_scene_name}...")
             
-            # Switch to the scene
-            context.window.scene = bpy.data.scenes[comp_scene_name]
-            
-            # Force screen update
-            bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
-            
-            # Render animation for this scene
-            bpy.ops.render.render(animation=True)
-            
-            self.report({'INFO'}, f"Finished rendering {comp_scene_name}")
-        else:
-            self.report({'WARNING'}, f"Scene {comp_scene_name} not found!")
+            if success:
+                # Step 3: Render the composition scene
+                self.report({'INFO'}, "Rendering MobileScene_Comp...")
+                context.window.scene = bpy.data.scenes["MobileScene_Comp"]
+                bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+                
+                try:
+                    bpy.ops.render.render(animation=True)
+                    self.report({'INFO'}, "Finished rendering MobileScene_Comp")
+                except Exception as e:
+                    self.report({'ERROR'}, f"Error rendering MobileScene_Comp: {str(e)}")
         
         # Return to original scene
         context.window.scene = bpy.data.scenes[original_scene]
@@ -230,10 +278,17 @@ class RenderDesktopOnlyOperator(Operator):
     bl_options = {'REGISTER'}
     
     def execute(self, context):
-        # First render frames, then refresh compositor, then render video
-        
         # Store original scene
         original_scene = context.window.scene.name
+        
+        # Get the current blend file name
+        blend_filepath = bpy.data.filepath
+        if not blend_filepath:
+            self.report({'ERROR'}, "Please save your file first")
+            return {'CANCELLED'}
+        
+        blend_filename = os.path.splitext(os.path.basename(blend_filepath))[0]
+        output_dir = "//Output/"
         
         # Step 1: Render the main scene
         scene_name = "DesktopScene"
@@ -253,55 +308,39 @@ class RenderDesktopOnlyOperator(Operator):
         else:
             self.report({'WARNING'}, f"Scene {scene_name} not found!")
         
-        # Step 2: Refresh the compositor scene
-        blend_filepath = bpy.data.filepath
-        if not blend_filepath:
-            self.report({'ERROR'}, "Please save your file first")
-            return {'CANCELLED'}
-            
-        blend_filename = os.path.splitext(os.path.basename(blend_filepath))[0]
-        output_dir = "//Output/"
+        # Step 2: Check for frames and set up composition
         desktop_frames_dir = output_dir + "DesktopFrames/"
-        
-        # Manually verify frame existence and report
         desktop_pattern = bpy.path.abspath(desktop_frames_dir + blend_filename + "_*.*")
         desktop_frames = glob.glob(desktop_pattern)
+        
         self.report({'INFO'}, f"Found {len(desktop_frames)} desktop frames")
         
-        # If we have frames, refresh the compositor scene
-        if desktop_frames:
-            self.report({'INFO'}, "Refreshing DesktopScene_Comp")
-            # Get active operator
-            setup_op = MultiChannelExportPipelineSetup
-            # Call setup_compositor function to rebuild the compositor with the right frames
-            setup_op.setup_compositor(
-                setup_op,
-                "DesktopScene", 
-                desktop_frames_dir, 
-                output_dir + "DesktopOut/",
-                is_mobile=False
+        if desktop_frames and len(desktop_frames) > 0:
+            # Make sure output directory exists
+            desktop_out_dir = bpy.path.abspath(output_dir + "DesktopOut/")
+            os.makedirs(desktop_out_dir, exist_ok=True)
+            
+            # Set up the composition scene
+            all_renderer = RenderAllOperator()
+            all_renderer.report = self.report
+            
+            success = all_renderer.setup_simple_composition(
+                "DesktopScene",
+                desktop_frames,
+                output_dir + "DesktopOut/" + blend_filename + ".mp4"
             )
-        
-        # Force scene refresh
-        bpy.context.view_layer.update()
-        
-        # Step 3: Render the compositor scene
-        comp_scene_name = "DesktopScene_Comp"
-        if comp_scene_name in bpy.data.scenes:
-            self.report({'INFO'}, f"Rendering {comp_scene_name}...")
             
-            # Switch to the scene
-            context.window.scene = bpy.data.scenes[comp_scene_name]
-            
-            # Force screen update
-            bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
-            
-            # Render animation for this scene
-            bpy.ops.render.render(animation=True)
-            
-            self.report({'INFO'}, f"Finished rendering {comp_scene_name}")
-        else:
-            self.report({'WARNING'}, f"Scene {comp_scene_name} not found!")
+            if success:
+                # Step 3: Render the composition scene
+                self.report({'INFO'}, "Rendering DesktopScene_Comp...")
+                context.window.scene = bpy.data.scenes["DesktopScene_Comp"]
+                bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+                
+                try:
+                    bpy.ops.render.render(animation=True)
+                    self.report({'INFO'}, "Finished rendering DesktopScene_Comp")
+                except Exception as e:
+                    self.report({'ERROR'}, f"Error rendering DesktopScene_Comp: {str(e)}")
         
         # Return to original scene
         context.window.scene = bpy.data.scenes[original_scene]
