@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Multi-Channel Export Pipeline",
     "author": "Your Name",
-    "version": (1, 2, 0),  # Increment this when making changes (major, minor, patch)
+    "version": (1, 3, 0),  # Increment this when making changes (major, minor, patch)
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Export Tab",
     "description": "Creates a one-click pipeline for exporting scenes to frames and videos",
