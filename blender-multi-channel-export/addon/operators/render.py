@@ -1,6 +1,7 @@
 import bpy
 import os
 import glob
+import re
 from bpy.props import StringProperty
 from bpy.types import Operator
 
@@ -73,7 +74,7 @@ class RenderAllOperator(Operator):
             os.makedirs(mobile_out_dir, exist_ok=True)
             
             # Set up the mobile composition scene
-            self.setup_composition_with_looping(
+            self.create_video_from_frames(
                 "MobileScene", 
                 mobile_frames, 
                 output_dir + "MobileOut/" + blend_filename + ".mp4",
@@ -92,7 +93,7 @@ class RenderAllOperator(Operator):
             os.makedirs(desktop_out_dir, exist_ok=True)
             
             # Set up the desktop composition scene
-            self.setup_composition_with_looping(
+            self.create_video_from_frames(
                 "DesktopScene", 
                 desktop_frames, 
                 output_dir + "DesktopOut/" + blend_filename + ".mp4",
@@ -133,9 +134,17 @@ class RenderAllOperator(Operator):
         self.report({'INFO'}, "All rendering complete!")
         return {'FINISHED'}
     
-    def setup_composition_with_looping(self, scene_name, frames, output_path, loop_extend=False, hold_frames=15):
-        """Set up a composition scene with frames and optional looping"""
-        if not frames:
+    def get_frame_number(self, filepath):
+        """Extract frame number from filename"""
+        # Look for patterns like _0001, _001, etc.
+        match = re.search(r'_(\d+)\.', filepath)
+        if match:
+            return int(match.group(1))
+        return 0
+    
+    def create_video_from_frames(self, scene_name, frame_files, output_path, loop_extend=False, hold_frames=15):
+        """Create a video from frames using a more direct approach"""
+        if not frame_files:
             self.report({'WARNING'}, f"No frames found for {scene_name}")
             return False
         
@@ -155,23 +164,6 @@ class RenderAllOperator(Operator):
         else:
             comp_scene.render.fps = 30
         
-        # Sort frames to ensure they're in order
-        frames.sort()
-        num_frames = len(frames)
-        
-        # Calculate frame range based on looping settings
-        if loop_extend and num_frames > 1:
-            # Forward + hold + reverse + hold
-            total_frames = (num_frames * 2) + (hold_frames * 2)
-            self.report({'INFO'}, f"Loop enabled with {hold_frames} hold frames, total: {total_frames} frames")
-        else:
-            total_frames = num_frames
-            self.report({'INFO'}, f"No loop, using {total_frames} frames")
-        
-        # Set frame range
-        comp_scene.frame_start = 1
-        comp_scene.frame_end = total_frames
-        
         # Set up FFMPEG output
         comp_scene.render.filepath = output_path
         comp_scene.render.image_settings.file_format = 'FFMPEG'
@@ -188,80 +180,113 @@ class RenderAllOperator(Operator):
         for strip in comp_scene.sequence_editor.sequences:
             comp_scene.sequence_editor.sequences.remove(strip)
         
-        # Get first and last frames for reference
-        first_frame = frames[0]
-        last_frame = frames[-1]
+        # Sort frames by their frame number
+        frame_files.sort(key=self.get_frame_number)
         
-        # Add the image sequence strips
+        # Log the first few and last few frames for debugging
+        if len(frame_files) > 0:
+            self.report({'INFO'}, f"First frame: {frame_files[0]}")
+            if len(frame_files) > 1:
+                self.report({'INFO'}, f"Second frame: {frame_files[1]}")
+            self.report({'INFO'}, f"Last frame: {frame_files[-1]}")
+        
+        # Get the number of frames
+        num_frames = len(frame_files)
+        
+        # Create an image sequence strip - using a new approach
         strips = comp_scene.sequence_editor.sequences
         
+        # Completely new approach: Use the movie strip option with directory and pattern
+        # This relies on all frames being properly named with sequential numbers
         try:
-            # 1. Create the forward strip
-            forward_strip = strips.new_image(
-                name=f"{scene_name}_Forward",
-                filepath=first_frame,
-                channel=1,
-                frame_start=1
-            )
+            # Find the directory that contains the frames
+            frame_dir = os.path.dirname(frame_files[0])
+            first_frame_name = os.path.basename(frame_files[0])
             
-            # Make it use the sequence of frames
-            forward_strip.use_sequence = True
-            forward_strip.frame_final_duration = num_frames
+            # Get the file extension
+            _, ext = os.path.splitext(first_frame_name)
             
-            current_frame = num_frames + 1
-            
-            # If looping is enabled, add hold and reverse strips
-            if loop_extend and num_frames > 1:
-                # 2. Add the hold last frame strip
-                hold_last_strip = strips.new_image(
-                    name=f"{scene_name}_HoldLast",
-                    filepath=last_frame,
+            # Get the pattern (e.g., "blend_file_name_")
+            pattern_match = re.match(r'(.+_)\d+\.', first_frame_name)
+            if pattern_match:
+                pattern = pattern_match.group(1)
+                
+                # Use the built-in Blender movie strip which handles image sequences better
+                # Note: This expects a directory and a pattern rather than individual files
+                movie_strip = strips.new_movie(
+                    name=f"{scene_name}_Movie",
+                    filepath=os.path.join(frame_dir, pattern + "####" + ext),
                     channel=1,
-                    frame_start=current_frame
+                    frame_start=1
                 )
-                hold_last_strip.frame_final_duration = hold_frames
-                current_frame += hold_frames
                 
-                # 3. Add the reverse strip
-                # Create a reverse strip using the last frame as a starting point
-                reverse_strip = strips.new_image(
-                    name=f"{scene_name}_Reverse",
-                    filepath=last_frame,
-                    channel=1,
-                    frame_start=current_frame
-                )
-                reverse_strip.frame_final_duration = num_frames
+                # Set the frame range for the strip
+                first_frame_num = self.get_frame_number(frame_files[0])
+                movie_strip.frame_offset_start = first_frame_num - 1  # Blender uses 0-based indexing
+                movie_strip.frame_final_duration = num_frames
                 
-                # Set it to use the sequence
-                reverse_strip.use_sequence = True
+                self.report({'INFO'}, f"Created movie strip using pattern: {pattern}####")
                 
-                # Replace the elements with frames in reverse order
-                if hasattr(reverse_strip, "elements"):
-                    # Clear existing elements
-                    while len(reverse_strip.elements) > 0:
-                        reverse_strip.elements.pop()
+                if loop_extend and num_frames > 1:
+                    # Calculate total frames needed for the loop
+                    total_frames = num_frames + hold_frames + num_frames + hold_frames
                     
-                    # Add frames in reverse order
-                    for frame_path in reversed(frames):
-                        element = reverse_strip.elements.append(frame_path)
+                    # 1. Hold the last frame
+                    last_frame = frame_files[-1]
+                    hold_last_strip = strips.new_image(
+                        name=f"{scene_name}_HoldLast",
+                        filepath=last_frame,
+                        channel=1,
+                        frame_start=num_frames + 1
+                    )
+                    hold_last_strip.frame_final_duration = hold_frames
+                    
+                    # 2. Create a reversed strip
+                    # We'll use the same movie strip approach but reverse the frames manually
+                    reverse_pattern = os.path.join(frame_dir, pattern + "####" + ext)
+                    reverse_strip = strips.new_movie(
+                        name=f"{scene_name}_Reverse",
+                        filepath=reverse_pattern,
+                        channel=1,
+                        frame_start=num_frames + hold_frames + 1
+                    )
+                    
+                    # This is a trick to make the strip play in reverse: set the frame start offset high
+                    # and then use a negative frame step to play backward
+                    last_frame_num = self.get_frame_number(frame_files[-1])
+                    reverse_strip.frame_offset_start = last_frame_num - 1
+                    reverse_strip.frame_final_duration = num_frames
+                    reverse_strip.use_reverse_frames = True  # Tell Blender to play the frames in reverse
+                    
+                    # 3. Hold the first frame 
+                    first_frame = frame_files[0]
+                    hold_first_strip = strips.new_image(
+                        name=f"{scene_name}_HoldFirst",
+                        filepath=first_frame,
+                        channel=1,
+                        frame_start=num_frames + hold_frames + num_frames + 1
+                    )
+                    hold_first_strip.frame_final_duration = hold_frames
+                    
+                    # Set frame range for the entire animation
+                    comp_scene.frame_start = 1
+                    comp_scene.frame_end = total_frames
+                    
+                    self.report({'INFO'}, f"Created looping animation with total duration: {total_frames} frames")
+                else:
+                    # Set frame range for just the original animation
+                    comp_scene.frame_start = 1
+                    comp_scene.frame_end = num_frames
+                    
+                    self.report({'INFO'}, f"Created standard animation with duration: {num_frames} frames")
                 
-                current_frame += num_frames
+                return True
+            else:
+                self.report({'ERROR'}, f"Could not determine filename pattern from: {first_frame_name}")
+                return False
                 
-                # 4. Add the hold first frame strip
-                hold_first_strip = strips.new_image(
-                    name=f"{scene_name}_HoldFirst",
-                    filepath=first_frame,
-                    channel=1,
-                    frame_start=current_frame
-                )
-                hold_first_strip.frame_final_duration = hold_frames
-                
-                self.report({'INFO'}, f"Created loop animation with {hold_frames} hold frames")
-            
-            return True
-            
         except Exception as e:
-            self.report({'ERROR'}, f"Error setting up composition: {str(e)}")
+            self.report({'ERROR'}, f"Error creating composition: {str(e)}")
             return False
 
 
@@ -323,7 +348,7 @@ class RenderMobileOnlyOperator(Operator):
             all_renderer = RenderAllOperator()
             all_renderer.report = self.report
             
-            success = all_renderer.setup_composition_with_looping(
+            success = all_renderer.create_video_from_frames(
                 "MobileScene",
                 mobile_frames,
                 output_dir + "MobileOut/" + blend_filename + ".mp4",
@@ -407,7 +432,7 @@ class RenderDesktopOnlyOperator(Operator):
             all_renderer = RenderAllOperator()
             all_renderer.report = self.report
             
-            success = all_renderer.setup_composition_with_looping(
+            success = all_renderer.create_video_from_frames(
                 "DesktopScene",
                 desktop_frames,
                 output_dir + "DesktopOut/" + blend_filename + ".mp4",
