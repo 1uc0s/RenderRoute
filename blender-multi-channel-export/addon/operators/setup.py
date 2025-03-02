@@ -163,8 +163,7 @@ class MultiChannelExportPipelineSetup(Operator):
                     frame_start=1
                 )
                 
-                # Set the image strip to use the sequence
-                forward_strip.use_sequence = True
+                # Removed the problematic line: forward_strip.use_sequence = True
                 forward_strip.frame_final_duration = num_frames
                 
                 # If looping is enabled, create the additional parts of the loop
@@ -186,7 +185,7 @@ class MultiChannelExportPipelineSetup(Operator):
                         channel=1,
                         frame_start=num_frames + self.hold_frames + 1
                     )
-                    reverse_strip.use_sequence = True
+                    # Removed the problematic line: reverse_strip.use_sequence = True
                     reverse_strip.frame_final_duration = num_frames
                     
                     # Now create the reverse sequence
