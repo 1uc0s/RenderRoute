@@ -1,0 +1,62 @@
+# Blender files
+*.blend
+*.blend1
+*.blend2
+*.blend3
+*.blend4
+*.blend5
+
+# Output directories
+Output/
+*_Output/
+
+# Rendered frames and videos
+*.mp4
+*.mov
+*.exr
+*.png
+*.jpg
+*.jpeg
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs
+*.log
+logs/
+log.txt
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
