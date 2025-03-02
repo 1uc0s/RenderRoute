@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Multi-Channel Export Pipeline",
     "author": "Your Name",
-    "version": (1, 1, 0),  # Increment this when making changes (major, minor, patch)
+    "version": (1, 2, 0),  # Increment this when making changes (major, minor, patch)
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Export Tab",
     "description": "Creates a one-click pipeline for exporting scenes to frames and videos",
@@ -18,11 +18,13 @@ from .operators.setup import MultiChannelExportPipelineSetup
 from .panels.export_panel import MultiChannelExportPanel
 
 # Import render operators directly 
-# This is to ensure we get the actual classes as defined in the file
-import importlib
-from . import operators
-importlib.reload(operators.render)
-from .operators.render import *
+from .operators.render import (
+    RenderAllOperator,
+    RenderMobileOnlyOperator,
+    RenderDesktopOnlyOperator,
+    AdvancedRenderSettingsOperator,
+    SwitchToSceneOperator
+)
 
 # Define addon version as string for display
 __version__ = ".".join(str(v) for v in bl_info["version"])

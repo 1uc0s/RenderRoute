@@ -23,6 +23,23 @@ class MultiChannelExportPanel(Panel):
         box.label(text="Pipeline Setup", icon='MODIFIER')
         box.operator("export.setup_pipeline", text="Setup Export Pipeline")
         
+        # Rendering operators
+        box = layout.box()
+        box.label(text="Render", icon='RENDER_ANIMATION')
+        box.operator("export.render_all", text="Render All")
+        row = box.row(align=True)
+        row.operator("export.render_mobile", text="Render Mobile")
+        row.operator("export.render_desktop", text="Render Desktop")
+        box.operator("export.advanced_render_settings", text="Advanced Settings")
+        
+        # Scene switching
+        box = layout.box()
+        box.label(text="Scene Navigation", icon='SCENE_DATA')
+        row = box.row(align=True)
+        row.operator("export.switch_to_scene", text="Mobile").scene_name = "MobileScene"
+        row.operator("export.switch_to_scene", text="Desktop").scene_name = "DesktopScene"
+        row.operator("export.switch_to_scene", text="Control").scene_name = "ControlScene"
+        
         # Looping controls section
         box = layout.box()
         box.label(text="Animation Loop Settings", icon='LOOP_FORWARDS')
@@ -44,4 +61,6 @@ class MultiChannelExportPanel(Panel):
             info_box.label(text="Loop sequence:")
             col = info_box.column(align=True)
             col.label(text="1. Play animation forward")
-            col.label(text=f"2. Hold last frame for {control_scene
+            col.label(text=f"2. Hold last frame for {control_scene.hold_frames} frames")
+            col.label(text="3. Play animation backward")
+            col.label(text=f"4. Hold first frame for {control_scene.hold_frames} frames")
