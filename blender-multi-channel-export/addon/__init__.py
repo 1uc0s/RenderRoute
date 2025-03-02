@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Multi-Channel Export Pipeline",
     "author": "Your Name",
-    "version": (1, 0),
+    "version": (1, 1, 0),  # Increment this when making changes (major, minor, patch)
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Export Tab",
     "description": "Creates a one-click pipeline for exporting scenes to frames and videos",
@@ -11,7 +11,7 @@ bl_info = {
 }
 
 import bpy
-from bpy.props import BoolProperty, IntProperty
+from bpy.props import BoolProperty, IntProperty, StringProperty
 
 # Import all operators and panels
 from .operators.setup import MultiChannelExportPipelineSetup
@@ -22,6 +22,9 @@ from .operators.render import (
     SwitchToSceneOperator
 )
 from .panels.export_panel import MultiChannelExportPanel
+
+# Define addon version as string for display
+__version__ = ".".join(str(v) for v in bl_info["version"])
 
 # Registration
 classes = (
@@ -51,11 +54,20 @@ def register():
         min=1,
         max=120
     )
+    
+    # Store version for UI display
+    bpy.types.Scene.mce_addon_version = StringProperty(
+        name="Addon Version",
+        description="Current version of the Multi-Channel Export Pipeline addon",
+        default=__version__,
+        options={'HIDDEN'}
+    )
 
 def unregister():
     # Remove custom properties
     del bpy.types.Scene.loop_extend_frames
     del bpy.types.Scene.hold_frames
+    del bpy.types.Scene.mce_addon_version
     
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
