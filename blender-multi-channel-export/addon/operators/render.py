@@ -17,7 +17,7 @@ class RenderAllOperator(Operator):
         ]
         
         # Store original scene
-        original_scene = context.window.scene.name
+        original_scene = context.window.scene.name 
         
         # Ensure we're rendering one scene at a time
         for scene_name in scenes_to_render:
