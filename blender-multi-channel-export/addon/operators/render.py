@@ -54,6 +54,11 @@ class RenderAllOperator(Operator):
         mobile_frames_dir = output_dir + "MobileFrames/"
         desktop_frames_dir = output_dir + "DesktopFrames/"
         
+        # Get looping settings from control scene
+        control_scene = bpy.data.scenes.get("ControlScene", context.scene)
+        loop_extend_frames = control_scene.loop_extend_frames
+        hold_frames = control_scene.hold_frames
+        
         # Manually set up the composition scenes
         self.report({'INFO'}, "--- Setting up composition scenes ---")
         
@@ -68,10 +73,12 @@ class RenderAllOperator(Operator):
             os.makedirs(mobile_out_dir, exist_ok=True)
             
             # Set up the mobile composition scene
-            self.setup_simple_composition(
+            self.setup_composition_with_looping(
                 "MobileScene", 
                 mobile_frames, 
-                output_dir + "MobileOut/" + blend_filename + ".mp4"
+                output_dir + "MobileOut/" + blend_filename + ".mp4",
+                loop_extend_frames,
+                hold_frames
             )
         
         # Desktop composition setup
@@ -85,10 +92,12 @@ class RenderAllOperator(Operator):
             os.makedirs(desktop_out_dir, exist_ok=True)
             
             # Set up the desktop composition scene
-            self.setup_simple_composition(
+            self.setup_composition_with_looping(
                 "DesktopScene", 
                 desktop_frames, 
-                output_dir + "DesktopOut/" + blend_filename + ".mp4"
+                output_dir + "DesktopOut/" + blend_filename + ".mp4",
+                loop_extend_frames,
+                hold_frames
             )
         
         # Force scene refresh
@@ -124,8 +133,8 @@ class RenderAllOperator(Operator):
         self.report({'INFO'}, "All rendering complete!")
         return {'FINISHED'}
     
-    def setup_simple_composition(self, scene_name, frames, output_path):
-        """Set up a simple composition scene with frames"""
+    def setup_composition_with_looping(self, scene_name, frames, output_path, loop_extend=False, hold_frames=15):
+        """Set up a composition scene with frames and optional looping"""
         if not frames:
             self.report({'WARNING'}, f"No frames found for {scene_name}")
             return False
@@ -143,12 +152,25 @@ class RenderAllOperator(Operator):
         if scene_name in bpy.data.scenes:
             source_scene = bpy.data.scenes[scene_name]
             comp_scene.render.fps = source_scene.render.fps
-            comp_scene.frame_start = 1
-            comp_scene.frame_end = len(frames)
         else:
             comp_scene.render.fps = 30
-            comp_scene.frame_start = 1
-            comp_scene.frame_end = len(frames)
+        
+        # Sort frames to ensure they're in order
+        frames.sort()
+        num_frames = len(frames)
+        
+        # Calculate frame range based on looping settings
+        if loop_extend and num_frames > 1:
+            # Forward + hold + reverse + hold
+            total_frames = (num_frames * 2) + (hold_frames * 2)
+            self.report({'INFO'}, f"Loop enabled with {hold_frames} hold frames, total: {total_frames} frames")
+        else:
+            total_frames = num_frames
+            self.report({'INFO'}, f"No loop, using {total_frames} frames")
+        
+        # Set frame range
+        comp_scene.frame_start = 1
+        comp_scene.frame_end = total_frames
         
         # Set up FFMPEG output
         comp_scene.render.filepath = output_path
@@ -166,29 +188,78 @@ class RenderAllOperator(Operator):
         for strip in comp_scene.sequence_editor.sequences:
             comp_scene.sequence_editor.sequences.remove(strip)
         
-        # Sort frames to ensure they're in order
-        frames.sort()
+        # Get first and last frames for reference
+        first_frame = frames[0]
+        last_frame = frames[-1]
         
-        # Add the image sequence
+        # Add the image sequence strips
         strips = comp_scene.sequence_editor.sequences
-        first_frame = frames[0]  # Use the first frame
         
-        # Create image strip
         try:
-            image_strip = strips.new_image(
-                name=f"{scene_name}_Sequence",
+            # 1. Create the forward strip
+            forward_strip = strips.new_image(
+                name=f"{scene_name}_Forward",
                 filepath=first_frame,
                 channel=1,
                 frame_start=1
             )
             
             # Make it use the sequence of frames
-            image_strip.use_sequence = True
-            image_strip.frame_final_duration = len(frames)
+            forward_strip.use_sequence = True
+            forward_strip.frame_final_duration = num_frames
             
-            self.report({'INFO'}, f"Added image sequence with {len(frames)} frames")
+            current_frame = num_frames + 1
+            
+            # If looping is enabled, add hold and reverse strips
+            if loop_extend and num_frames > 1:
+                # 2. Add the hold last frame strip
+                hold_last_strip = strips.new_image(
+                    name=f"{scene_name}_HoldLast",
+                    filepath=last_frame,
+                    channel=1,
+                    frame_start=current_frame
+                )
+                hold_last_strip.frame_final_duration = hold_frames
+                current_frame += hold_frames
+                
+                # 3. Add the reverse strip
+                # Create a reverse strip using the last frame as a starting point
+                reverse_strip = strips.new_image(
+                    name=f"{scene_name}_Reverse",
+                    filepath=last_frame,
+                    channel=1,
+                    frame_start=current_frame
+                )
+                reverse_strip.frame_final_duration = num_frames
+                
+                # Set it to use the sequence
+                reverse_strip.use_sequence = True
+                
+                # Replace the elements with frames in reverse order
+                if hasattr(reverse_strip, "elements"):
+                    # Clear existing elements
+                    while len(reverse_strip.elements) > 0:
+                        reverse_strip.elements.pop()
+                    
+                    # Add frames in reverse order
+                    for frame_path in reversed(frames):
+                        element = reverse_strip.elements.append(frame_path)
+                
+                current_frame += num_frames
+                
+                # 4. Add the hold first frame strip
+                hold_first_strip = strips.new_image(
+                    name=f"{scene_name}_HoldFirst",
+                    filepath=first_frame,
+                    channel=1,
+                    frame_start=current_frame
+                )
+                hold_first_strip.frame_final_duration = hold_frames
+                
+                self.report({'INFO'}, f"Created loop animation with {hold_frames} hold frames")
             
             return True
+            
         except Exception as e:
             self.report({'ERROR'}, f"Error setting up composition: {str(e)}")
             return False
@@ -243,14 +314,21 @@ class RenderMobileOnlyOperator(Operator):
             mobile_out_dir = bpy.path.abspath(output_dir + "MobileOut/")
             os.makedirs(mobile_out_dir, exist_ok=True)
             
+            # Get looping settings from control scene
+            control_scene = bpy.data.scenes.get("ControlScene", context.scene)
+            loop_extend_frames = control_scene.loop_extend_frames
+            hold_frames = control_scene.hold_frames
+            
             # Set up the composition scene
             all_renderer = RenderAllOperator()
             all_renderer.report = self.report
             
-            success = all_renderer.setup_simple_composition(
+            success = all_renderer.setup_composition_with_looping(
                 "MobileScene",
                 mobile_frames,
-                output_dir + "MobileOut/" + blend_filename + ".mp4"
+                output_dir + "MobileOut/" + blend_filename + ".mp4",
+                loop_extend_frames,
+                hold_frames
             )
             
             if success:
@@ -320,14 +398,21 @@ class RenderDesktopOnlyOperator(Operator):
             desktop_out_dir = bpy.path.abspath(output_dir + "DesktopOut/")
             os.makedirs(desktop_out_dir, exist_ok=True)
             
+            # Get looping settings from control scene
+            control_scene = bpy.data.scenes.get("ControlScene", context.scene)
+            loop_extend_frames = control_scene.loop_extend_frames
+            hold_frames = control_scene.hold_frames
+            
             # Set up the composition scene
             all_renderer = RenderAllOperator()
             all_renderer.report = self.report
             
-            success = all_renderer.setup_simple_composition(
+            success = all_renderer.setup_composition_with_looping(
                 "DesktopScene",
                 desktop_frames,
-                output_dir + "DesktopOut/" + blend_filename + ".mp4"
+                output_dir + "DesktopOut/" + blend_filename + ".mp4",
+                loop_extend_frames,
+                hold_frames
             )
             
             if success:
