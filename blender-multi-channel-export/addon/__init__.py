@@ -15,13 +15,14 @@ from bpy.props import BoolProperty, IntProperty, StringProperty
 
 # Import all operators and panels
 from .operators.setup import MultiChannelExportPipelineSetup
-from .operators.render import (
-    RenderAllOperator,
-    RenderMobileOnlyOperator,
-    RenderDesktopOnlyOperator,
-    SwitchToSceneOperator
-)
 from .panels.export_panel import MultiChannelExportPanel
+
+# Import render operators directly 
+# This is to ensure we get the actual classes as defined in the file
+import importlib
+from . import operators
+importlib.reload(operators.render)
+from .operators.render import *
 
 # Define addon version as string for display
 __version__ = ".".join(str(v) for v in bl_info["version"])
@@ -32,6 +33,7 @@ classes = (
     RenderAllOperator,
     RenderMobileOnlyOperator,
     RenderDesktopOnlyOperator,
+    AdvancedRenderSettingsOperator,
     SwitchToSceneOperator,
     MultiChannelExportPanel,
 )
